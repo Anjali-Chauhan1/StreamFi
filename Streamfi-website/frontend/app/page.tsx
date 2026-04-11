@@ -25,7 +25,7 @@ import UploadMovieForm from "../components/UploadMovieForm";
 import MovieGrid from "../components/MovieGrid";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
-import { ViewerBill, dueAmountHsk, getViewerBills, markBillPaid } from "../lib/viewerBilling";
+import { ViewerBill, getViewerBills } from "../lib/viewerBilling";
 
 const STREAMFI_ABI = abiJson.abi;
 const ROLE_STORAGE_PREFIX = "streamfi.role.";
@@ -501,10 +501,6 @@ export default function HomePage() {
       await tx.wait();
       pushLog("✅ Payment confirmed!");
       setPayStatus("✅ Payment confirmed!");
-      if (account) {
-        const updated = markBillPaid(account, Number(id), Number(payAmount));
-        setViewerBills(updated.sort((a, b) => b.updatedAt - a.updatedAt));
-      }
       setPayMovieId("");
       setPayAmount("");
     } catch (e: any) {
@@ -758,39 +754,6 @@ export default function HomePage() {
     activeInjectedProviderRef.current = null;
     setLogs([]);
     pushLog("Wallet disconnected");
-  }
-
-  async function handlePayViewerBill(bill: ViewerBill) {
-    const due = dueAmountHsk(bill);
-    if (!due || due <= 0) {
-      pushLog(`No due amount left for ${bill.title}`);
-      return;
-    }
-
-    try {
-      setPayLoading(true);
-      setPayStatus(null);
-      const c = await getContract();
-      const id = BigInt(bill.onChainId);
-      await assertMovieExists(c, id);
-      const amountText = due.toFixed(6);
-      const value = parseEther(amountText);
-      setPayStatus(`⏳ Paying bill for ${bill.title}...`);
-      const tx = await c.pay(id, { value });
-      pushLog(`Bill pay tx (${bill.title}): ${tx.hash}`);
-      await tx.wait();
-      setPayStatus(`✅ Bill paid for ${bill.title}`);
-      if (account) {
-        const updated = markBillPaid(account, bill.onChainId, due);
-        setViewerBills(updated.sort((a, b) => b.updatedAt - a.updatedAt));
-      }
-    } catch (e: any) {
-      const msg = e.reason || e.message || String(e);
-      setPayStatus(`❌ ${msg}`);
-      pushLog(`❌ Bill payment error: ${msg}`);
-    } finally {
-      setPayLoading(false);
-    }
   }
 
   async function loadCreatorAnalytics() {
@@ -1472,14 +1435,13 @@ export default function HomePage() {
               <div style={{ display: "grid", gap: "1rem" }}>
                 <motion.section className="console-card" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
                   <div className="console-number">00 · BILLING</div>
-                  <h2>Watch Bill Counter</h2>
-                  <p className="small">Tracks micropayments per movie while watching. Pay pending bills after watch.</p>
+                  <h2>Auto Settlement</h2>
+                  <p className="small">Micropayments are auto-settled when the player closes or video ends.</p>
                   <div style={{ marginTop: "0.6rem", display: "grid", gap: "0.55rem" }}>
                     {viewerBills.length === 0 && (
-                      <p className="small">No tracked bills yet. Open any movie and play to start counter.</p>
+                      <p className="small">No active sessions yet. Open any movie and play to start streaming.</p>
                     )}
                     {viewerBills.map((bill) => {
-                      const due = dueAmountHsk(bill);
                       return (
                         <div key={`${bill.movieId}-${bill.onChainId}`} className="card" style={{ padding: "0.6rem 0.7rem" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "center" }}>
@@ -1487,32 +1449,10 @@ export default function HomePage() {
                               <div style={{ fontSize: "0.82rem", fontWeight: 600 }}>{bill.title}</div>
                               <div className="small">Movie #{bill.onChainId} · Watched: {bill.watchedSeconds}s</div>
                               <div className="small" style={{ color: "#fb923c" }}>
-                                Due: {due.toFixed(6)} HSK (Paid: {bill.paidHsk.toFixed(6)} HSK)
+                                Session tracked: {(bill.pricePerSecond * bill.watchedSeconds).toFixed(6)} HSK
                               </div>
                             </div>
-                            <div style={{ display: "flex", gap: "0.4rem" }}>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                type="button"
-                                onClick={() => {
-                                  setPayMovieId(String(bill.onChainId));
-                                  setPayAmount(due.toFixed(6));
-                                }}
-                                disabled={due <= 0}
-                              >
-                                Use in Pay
-                              </Button>
-                              <Button
-                                variant="default"
-                                size="sm"
-                                type="button"
-                                onClick={() => handlePayViewerBill(bill)}
-                                disabled={due <= 0 || payLoading}
-                              >
-                                Pay Bill
-                              </Button>
-                            </div>
+                            <div className="small" style={{ color: "#4ade80" }}>Auto-paid on close</div>
                           </div>
                         </div>
                       );

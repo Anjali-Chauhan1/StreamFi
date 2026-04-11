@@ -3,7 +3,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import ReactPlayer from "react-player";
 import { useAccount } from "wagmi";
-import { dueAmountHsk, getViewerBills, upsertWatchTick } from "../lib/viewerBilling";
+import { BrowserProvider, Contract, parseEther } from "ethers";
+import abiJson from "../abi/StreamFiPayment.json";
+import { dueAmountHsk, getViewerBills, markBillPaid, upsertWatchTick } from "../lib/viewerBilling";
+
+const STREAMFI_ABI = abiJson.abi;
 
 type Props = {
   movieId: string;
@@ -21,7 +25,51 @@ export default function MoviePlayer({ movieId, onChainId, videoUrl, title, price
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [sessionAmount, setSessionAmount] = useState(0);
   const [totalDue, setTotalDue] = useState(0);
+  const [settleStatus, setSettleStatus] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const settlingRef = useRef(false);
+
+  async function autoSettlePendingDue() {
+    if (settlingRef.current || !address) return;
+
+    const bills = getViewerBills(address);
+    const movieBill = bills.find((b) => b.onChainId === onChainId);
+    const due = movieBill ? dueAmountHsk(movieBill) : 0;
+
+    if (!due || due <= 0) {
+      setTotalDue(0);
+      return;
+    }
+
+    try {
+      settlingRef.current = true;
+      setSettleStatus("Settling pending amount...");
+
+      const anyWin = window as any;
+      if (!anyWin.ethereum) throw new Error("Wallet not found for auto-settlement");
+
+      const provider = new BrowserProvider(anyWin.ethereum);
+      const signer = await provider.getSigner();
+
+      const contractAddress = process.env.NEXT_PUBLIC_STREAMFI_CONTRACT_ADDRESS;
+      if (!contractAddress) throw new Error("Contract address not configured");
+
+      const contract = new Contract(contractAddress, STREAMFI_ABI, signer);
+      const amountText = due.toFixed(6);
+      const value = parseEther(amountText);
+
+      const tx = await contract.pay(BigInt(onChainId), { value });
+      await tx.wait();
+
+      markBillPaid(address, onChainId, due);
+      setTotalDue(0);
+      setSettleStatus("Pending amount paid");
+    } catch (err: any) {
+      setSettleStatus(err?.reason || err?.message || "Auto-settlement failed");
+    } finally {
+      settlingRef.current = false;
+    }
+  }
 
   useEffect(() => {
     if (!address) {
@@ -62,12 +110,32 @@ export default function MoviePlayer({ movieId, onChainId, videoUrl, title, price
     };
   }, [address, playing, movieId, onChainId, title, pricePerSecond]);
 
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (totalDue > 0) {
+        void autoSettlePendingDue();
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [totalDue]);
+
+  useEffect(() => {
+    return () => {
+      void autoSettlePendingDue();
+    };
+  }, [address, onChainId]);
+
   return (
     <div className="fixed inset-0 bg-black flex flex-col items-center justify-center">
       <div className="absolute top-4 right-4 flex items-center gap-2 text-xs text-emerald-300 bg-emerald-900/40 border border-emerald-500/60 px-3 py-1 rounded-full">
         <span>💰 {pricePerSecond.toFixed(4)} HSK/sec</span>
         <span>• Session: {sessionAmount.toFixed(4)} HSK</span>
         <span>• Total Due: {totalDue.toFixed(4)} HSK</span>
+        {settleStatus && <span>• {settleStatus}</span>}
       </div>
       <div className="w-full max-w-5xl px-4">
         <div className="mb-2 text-sm text-slate-200">{title}</div>
@@ -83,6 +151,10 @@ export default function MoviePlayer({ movieId, onChainId, videoUrl, title, price
             playbackRate={playbackRate}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
+            onEnded={() => {
+              setPlaying(false);
+              void autoSettlePendingDue();
+            }}
           />
         </div>
         <div className="mt-3 flex items-center justify-between text-xs text-slate-300">
