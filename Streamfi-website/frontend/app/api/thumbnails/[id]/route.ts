@@ -1,5 +1,6 @@
 import { GridFSBucket, ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
+import { Readable } from "node:stream";
 import { getMongoDb } from "../../../../lib/mongodb";
 
 export const runtime = "nodejs";
@@ -7,6 +8,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   try {
+    if (!ObjectId.isValid(params.id)) {
+      return NextResponse.json({ error: "Invalid thumbnail id" }, { status: 400 });
+    }
+
     const db = await getMongoDb();
     const bucket = new GridFSBucket(db, { bucketName: "thumbnails" });
 
@@ -18,10 +23,11 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     }
 
     const stream = bucket.openDownloadStream(fileId);
-    return new NextResponse(stream as any, {
+    return new NextResponse(Readable.toWeb(stream as any) as ReadableStream, {
       status: 200,
       headers: {
         "Content-Type": String(file.contentType || "image/png"),
+        "Content-Length": String(Number(file.length || 0)),
         "Cache-Control": "public, max-age=31536000, immutable",
       },
     });
