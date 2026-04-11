@@ -14,6 +14,7 @@ type Props = {
 
 export default function UploadMovieForm({ creatorWallet, onSuccess, pushLog }: Props) {
   const REQUEST_TIMEOUT_MS = 90_000;
+  const MAX_MEDIA_UPLOAD_BYTES = 500 * 1024 * 1024;
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -140,6 +141,9 @@ export default function UploadMovieForm({ creatorWallet, onSuccess, pushLog }: P
       }
       if (!thumbnailFile) {
         throw new Error("Please select a thumbnail image");
+      }
+      if (mediaFile.size > MAX_MEDIA_UPLOAD_BYTES) {
+        throw new Error("Media file is too large (max 500MB).");
       }
 
       // --- Step 2: Register movie on-chain ---

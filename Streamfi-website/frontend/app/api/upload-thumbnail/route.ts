@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
-import { promises as fs } from "fs";
+import { GridFSBucket } from "mongodb";
+import { getMongoDb } from "../../../lib/mongodb";
 
 export const runtime = "nodejs";
 
@@ -26,17 +26,25 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await blob.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    const uploadsDir = path.join(process.cwd(), "public", "uploads", "thumbnails");
-    await fs.mkdir(uploadsDir, { recursive: true });
+    const db = await getMongoDb();
+    const bucket = new GridFSBucket(db, { bucketName: "thumbnails" });
 
     const originalName = blob.name || "thumbnail";
     const ext = originalName.includes(".") ? originalName.split(".").pop() : "png";
     const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    const filePath = path.join(uploadsDir, filename);
 
-    await fs.writeFile(filePath, buffer);
+    const uploadStream = bucket.openUploadStream(filename, {
+      contentType: mimeType || "image/png",
+      metadata: { originalName },
+    });
 
-    const url = `/uploads/thumbnails/${filename}`;
+    await new Promise<void>((resolve, reject) => {
+      uploadStream.on("finish", () => resolve());
+      uploadStream.on("error", (err) => reject(err));
+      uploadStream.end(buffer);
+    });
+
+    const url = `/api/thumbnails/${uploadStream.id.toString()}`;
 
     return NextResponse.json({ url });
   } catch (err) {

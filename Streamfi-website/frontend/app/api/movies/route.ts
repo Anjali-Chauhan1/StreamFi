@@ -36,7 +36,7 @@ export async function GET() {
     return NextResponse.json(normalized);
   } catch (err) {
     console.error("GET /api/movies error", err);
-    return NextResponse.json({ error: "Failed to fetch movies" }, { status: 500 });
+    return NextResponse.json([], { status: 200 });
   }
 }
 

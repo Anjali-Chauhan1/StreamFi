@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
-import { promises as fs } from "fs";
+import { GridFSBucket } from "mongodb";
+import { getMongoDb } from "../../../lib/mongodb";
 
 export const runtime = "nodejs";
 
@@ -43,16 +43,24 @@ export async function POST(req: NextRequest) {
     const arrayBuffer = await blob.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    const uploadsDir = path.join(process.cwd(), "public", "uploads", "media");
-    await fs.mkdir(uploadsDir, { recursive: true });
+    const db = await getMongoDb();
+    const bucket = new GridFSBucket(db, { bucketName: "media" });
 
     const safeExt = ALLOWED_EXTENSIONS.has(ext) ? ext : "mp4";
     const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.${safeExt}`;
-    const filePath = path.join(uploadsDir, filename);
 
-    await fs.writeFile(filePath, buffer);
+    const uploadStream = bucket.openUploadStream(filename, {
+      contentType: mimeType || "application/octet-stream",
+      metadata: { originalName },
+    });
 
-    const url = `/uploads/media/${filename}`;
+    await new Promise<void>((resolve, reject) => {
+      uploadStream.on("finish", () => resolve());
+      uploadStream.on("error", (err) => reject(err));
+      uploadStream.end(buffer);
+    });
+
+    const url = `/api/media/${uploadStream.id.toString()}`;
     return NextResponse.json({ url });
   } catch (err) {
     console.error("POST /api/upload-media error", err);
