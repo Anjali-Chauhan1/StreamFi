@@ -26,9 +26,11 @@ export default function MoviePlayer({ movieId, onChainId, videoUrl, title, price
   const [sessionAmount, setSessionAmount] = useState(0);
   const [totalDue, setTotalDue] = useState(0);
   const [settleStatus, setSettleStatus] = useState<string | null>(null);
+  const [isSettling, setIsSettling] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const settlingRef = useRef(false);
   const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const paymentRequired = totalDue > 0 || isSettling;
 
   async function autoSettlePendingDue() {
     if (settlingRef.current || !address) return;
@@ -44,6 +46,7 @@ export default function MoviePlayer({ movieId, onChainId, videoUrl, title, price
 
     try {
       settlingRef.current = true;
+      setIsSettling(true);
       setSettleStatus("Settling pending amount...");
 
       const anyWin = window as any;
@@ -88,8 +91,15 @@ export default function MoviePlayer({ movieId, onChainId, videoUrl, title, price
       }
     } finally {
       settlingRef.current = false;
+      setIsSettling(false);
     }
   }
+
+  useEffect(() => {
+    if (paymentRequired) {
+      setPlaying(false);
+    }
+  }, [paymentRequired]);
 
   useEffect(() => {
     if (!address) {
@@ -185,15 +195,52 @@ export default function MoviePlayer({ movieId, onChainId, videoUrl, title, price
         <div className="mb-2 text-sm text-slate-200">{title}</div>
         <div className="mb-2 text-xs text-slate-400">Watched this session: {sessionSeconds}s</div>
         <div className="aspect-video rounded-xl overflow-hidden bg-black shadow-2xl shadow-black/80">
+          {paymentRequired && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                zIndex: 10,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "rgba(0, 0, 0, 0.72)",
+              }}
+            >
+              <div style={{ textAlign: "center", color: "#fff", maxWidth: "28rem", padding: "1rem" }}>
+                <div style={{ fontWeight: 700, marginBottom: "0.45rem" }}>Payment Required</div>
+                <div style={{ fontSize: "0.85rem", color: "#cbd5e1", marginBottom: "0.85rem" }}>
+                  This movie cannot play until pending due is paid.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void autoSettlePendingDue();
+                  }}
+                  disabled={isSettling}
+                  className="px-3 py-1 rounded-full bg-orange-500 hover:bg-orange-400 transition text-xs font-semibold disabled:opacity-60"
+                >
+                  {isSettling ? "Paying..." : `Pay Now (${totalDue.toFixed(6)} HSK)`}
+                </button>
+              </div>
+            </div>
+          )}
           <ReactPlayer
             url={videoUrl}
             playing={playing}
-            controls
+            controls={!paymentRequired}
             width="100%"
             height="100%"
             volume={volume}
             playbackRate={playbackRate}
-            onPlay={() => setPlaying(true)}
+            onPlay={() => {
+              if (paymentRequired) {
+                setPlaying(false);
+                void autoSettlePendingDue();
+                return;
+              }
+              setPlaying(true);
+            }}
             onPause={() => setPlaying(false)}
             onEnded={() => {
               setPlaying(false);
@@ -205,7 +252,13 @@ export default function MoviePlayer({ movieId, onChainId, videoUrl, title, price
           <button
             className="px-3 py-1 rounded-full bg-slate-800 hover:bg-slate-700 transition"
             type="button"
-            onClick={() => setPlaying((p) => !p)}
+            onClick={() => {
+              if (paymentRequired) {
+                void autoSettlePendingDue();
+                return;
+              }
+              setPlaying((p) => !p);
+            }}
           >
             {playing ? "Pause" : "Play"}
           </button>
