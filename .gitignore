@@ -36,6 +36,11 @@ pnpm-debug.log*
 
 # dotenv environment variables file
 /.env
+/.env.local
+/.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
 
 # Frontend local env files
 /frontend/.env
