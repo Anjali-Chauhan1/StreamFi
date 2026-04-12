@@ -654,6 +654,9 @@ export default function HomePage() {
     if (movie.status === "published" || movie.linkedMovieId) {
       throw new Error("This movie is already published. Invest from published movies.");
     }
+    if (!movie.onChainId || movie.onChainId <= 0) {
+      throw new Error("On-chain ID is not ready yet for this upcoming movie.");
+    }
     try {
       setInvestLoading(true);
       if (!amount) throw new Error("Enter investment amount");
@@ -662,7 +665,17 @@ export default function HomePage() {
         throw new Error("Enter a valid investment amount");
       }
 
-      pushLog(`Recording upcoming investment ${amountHsk} HSK in "${movie.title}"...`);
+      const c = await getContract();
+      const id = BigInt(movie.onChainId);
+      await assertMovieExists(c, id);
+
+      const value = parseEther(amount);
+      pushLog(`Sending on-chain upcoming investment ${amount} ETH in "${movie.title}" (#${id.toString()})...`);
+      const tx = await c.invest(id, { value });
+      pushLog(`Invest tx: ${tx.hash}`);
+      await tx.wait();
+
+      pushLog(`Recording successful upcoming investment ${amountHsk} HSK in database...`);
       const res = await fetch("/api/upcoming-investments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -681,7 +694,7 @@ export default function HomePage() {
       const data = await res.json().catch(() => ({}));
       await loadUpcomingMovies();
       pushLog(
-        `✅ Upcoming investment recorded. Total pledged: ${Number(data?.totalInvestedHsk || 0).toFixed(4)} HSK by ${Number(data?.investorCount || 0)} investor(s).`
+        `✅ On-chain investment confirmed and recorded. Total pledged: ${Number(data?.totalInvestedHsk || 0).toFixed(4)} HSK by ${Number(data?.investorCount || 0)} investor(s).`
       );
     } catch (e: any) {
       const msg = e.reason || e.message || String(e);
@@ -1934,16 +1947,21 @@ function UpcomingInvestCard({
   const [amount, setAmount] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const isPublished = movie.status === "published" || Boolean(movie.linkedMovieId);
+  const canInvestOnChain = Boolean(movie.onChainId && movie.onChainId > 0);
 
   const handleClick = async () => {
     if (isPublished) {
       setStatus("❌ This upcoming movie is already published");
       return;
     }
+    if (!canInvestOnChain) {
+      setStatus("❌ On-chain ID not ready yet");
+      return;
+    }
     setStatus("⏳ Sending...");
     try {
       await onInvest(movie, amount);
-      setStatus("✅ Investment recorded!");
+      setStatus("✅ On-chain investment sent and recorded!");
       setAmount("");
     } catch (e: any) {
       setStatus(`❌ ${e?.message || "Failed"}`);
@@ -1966,7 +1984,9 @@ function UpcomingInvestCard({
       <div className="small" style={{ marginTop: "0.2rem" }}>{movie.description}</div>
       <div style={{ marginTop: "0.6rem", fontSize: "0.72rem", color: "#9ca3af" }}>
         <div>Target: <span style={{ color: "#fbbf24" }}>{movie.targetAmountHsk || 0} HSK</span></div>
-        <div>Reserved On-chain ID: <span style={{ color: "#4ade80" }}>{movie.onChainId ?? "pending"}</span></div>
+        <div>
+          Reserved On-chain ID: <span style={{ color: canInvestOnChain ? "#4ade80" : "#f87171" }}>{movie.onChainId ?? "pending"}</span>
+        </div>
         <div>Pledged: <span style={{ color: "#60a5fa" }}>{Number(movie.pledgedTotalHsk || 0).toFixed(4)} HSK</span> by {movie.investorCount || 0} investor(s)</div>
       </div>
 
@@ -1978,18 +1998,24 @@ function UpcomingInvestCard({
           placeholder="e.g. 0.1"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          disabled={isPublished}
+          disabled={isPublished || !canInvestOnChain}
         />
       </div>
       <Button
-        variant={isPublished ? "outline" : "default"}
+        variant={isPublished || !canInvestOnChain ? "outline" : "default"}
         size="default"
         type="button"
         style={{ width: "100%", marginTop: "0.5rem" }}
-        disabled={loading || !amount || isPublished}
+        disabled={loading || !amount || isPublished || !canInvestOnChain}
         onClick={handleClick}
       >
-        {isPublished ? "Already Published" : loading ? "Processing..." : "Invest in Upcoming"}
+        {isPublished
+          ? "Already Published"
+          : !canInvestOnChain
+            ? "Waiting for On-chain Movie"
+            : loading
+              ? "Processing..."
+              : "Invest in Upcoming"}
       </Button>
       {status && (
         <p
